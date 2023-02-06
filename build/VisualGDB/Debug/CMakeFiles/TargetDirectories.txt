@@ -1,0 +1,5 @@
+C:/Users/Robot/Desktop/baer_motor_ethercat-master_bonbon/baer_motor/build/VisualGDB/Debug/CMakeFiles/BSP.dir
+C:/Users/Robot/Desktop/baer_motor_ethercat-master_bonbon/baer_motor/build/VisualGDB/Debug/CMakeFiles/rebuild_cache.dir
+C:/Users/Robot/Desktop/baer_motor_ethercat-master_bonbon/baer_motor/build/VisualGDB/Debug/CMakeFiles/baer_motor.dir
+C:/Users/Robot/Desktop/baer_motor_ethercat-master_bonbon/baer_motor/build/VisualGDB/Debug/CMakeFiles/baer_motor-bin.dir
+C:/Users/Robot/Desktop/baer_motor_ethercat-master_bonbon/baer_motor/build/VisualGDB/Debug/CMakeFiles/edit_cache.dir
