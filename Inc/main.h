@@ -61,6 +61,7 @@ void Error_Handler(void);
 #define CSS_GPIO_Port GPIOA
 #define ES_Pin GPIO_PIN_10
 #define ES_GPIO_Port GPIOA
+
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */

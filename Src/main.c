@@ -86,6 +86,7 @@ uint64_t hs_ = 0;
 uint8_t error_hs_ = 0;
 uint16_t motor_status_can = 0;
 uint64_t pos_cnt[6] = { 0, 0, 0, 0, 0, 0 };
+uint8_t startFlag=0;
 double we[6] = { 8000.0, 8000.0, 8000.0, 8000.0, 8000.0, 8000.0 };
 double pos_ref[6] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
 double pos0[6] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
@@ -121,9 +122,12 @@ union Byte2 byte_2_reply;
 union Byte2u byte_2u_reply;
 union Byte4 byte_4_reply;
 
-double_t pos1 = 0;
-double_t vel1 = 0;
-double_t tor1 = 0;
+float_t pos1 = 0;
+float_t vel1 = 0;
+float_t tor1 = 0;
+float_t pos1_old=0;
+float_t vel1_cal=0;
+
 double_t pos2 = 0;
 double_t vel2 = 0;
 double_t tor2 = 0;
@@ -146,8 +150,21 @@ uint64_t pos_3_ref64 = 0;
 uint64_t pos_4_ref64 = 0;
 uint64_t pos_s_ref64 = 0;
 
+float_t I1=0;
+float_t pos1_pid=0;
+
 uint64_t reply_hs[6];
 
+float_t fir_par[3]={0.321582376956940,0.356835246086121,0.321582376956940};
+float_t vel1_rec[3]={0};
+float_t vel1_fil=0;
+float_t TD_x1_old=0;
+float_t TD_x1=0;
+float_t TD_x2_old=0;
+float_t TD_x2=0;
+float_t TD_iniCount=5;
+const float_t TD_r=200;
+const float_t TD_h=0.001;
 
 /* USER CODE END PV */
 
@@ -200,13 +217,56 @@ void unpack_reply(FDCAN_RxHeaderTypeDef *pRxHeader, uint8_t *data)
 			{
 				byte_2_reply.buffer[0] = data[2];
 				byte_2_reply.buffer[1] = data[3];
-				pos1 = (double_t)byte_2_reply.udata * 0.01;
+				pos1 = (float_t)byte_2_reply.udata * 0.01;
+				if (pos1>180)
+					pos1=pos1-360;
+				if (pos1<-180)
+					pos1=pos1+360;
+
+				// vel from the diff of pos
+				float_t tmp;
+				tmp=(pos1-pos1_old)/0.001;
+				if (tmp>1000 || tmp<-1000)
+					tmp=0;
+				vel1_cal=tmp;
+				// ----
+
 				byte_2_reply.buffer[0] = data[4];
 				byte_2_reply.buffer[1] = data[5];
-				vel1 = (double_t)byte_2_reply.udata;
+				vel1 = (float_t)byte_2_reply.udata;
 				byte_2_reply.buffer[0] = data[6];
 				byte_2_reply.buffer[1] = data[7];
-				tor1 = (double_t)byte_2_reply.udata * 66.0 / 4096;
+				tor1 = (float_t)byte_2_reply.udata * 66.0 / 4096;
+
+				// vel from low pass of vel feedback
+				for (int i=0;i<2;i++)
+					vel1_rec[i]=vel1_rec[i+1];
+				vel1_rec[2]=vel1;
+
+				float_t tmp2=0;
+				for (int i=0;i<3;i++)
+					tmp2+=vel1_rec[i]*fir_par[i];
+				//---
+
+				if (TD_iniCount==0)
+				{
+					TD_x1=TD_x1_old+TD_h*TD_x2_old;
+					TD_x2=TD_x2_old-TD_h*(TD_r*TD_r*TD_x1_old+2*TD_r*TD_x2_old-TD_r*TD_r*pos1);
+					TD_x1_old=TD_x1;
+					TD_x2_old=TD_x2;
+				}
+				else
+				{
+					TD_iniCount--;
+					TD_x1_old=pos1;
+					TD_x2_old=vel1;
+					TD_x1=pos1;
+					TD_x2=vel1;
+				}
+
+				vel1_fil=TD_x2;
+
+				pos1_old=pos1;
 			}			
 			if (id == 2)
 			{
@@ -403,6 +463,22 @@ void motor_null(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, uint32_t 
 	data_buffer[7] = 0x00;
 }
 
+void motor_current(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, int16_t data_in, uint32_t Id)
+{
+	joint_tx->DataLength = FDCAN_DLC_BYTES_8;
+	joint_tx->Identifier = Id + 0x140;
+	byte_2_reply.udata = data_in;
+
+	data_buffer[0] = 0xa1;
+	data_buffer[1] = 0x00;
+	data_buffer[2] = 0;
+	data_buffer[3] = 0;
+	data_buffer[4] = byte_2_reply.buffer[0];
+	data_buffer[5] = byte_2_reply.buffer[1];
+	data_buffer[6] = 0x00;
+	data_buffer[7] = 0x00;
+}
+
 #define cmd_null 0x0000
 
 #define cmd_pas_enable  0x0001
@@ -445,6 +521,16 @@ void motor_data(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, uint64_t 
 	data_buffer[7] = byte_8.buffer[5];
 }
 
+float_t sign_dbl(float_t data)
+{
+	if (data>0)
+		return 1.0;
+	else if (data<0)
+		return -1.0;
+	else
+		return 0.0;
+
+}
 /* USER CODE END 0 */
 
 /**
@@ -565,7 +651,7 @@ int main(void)
 	ethercat_slave.bOut = &BufferOut;
 	HAL_Delay(10);
 	
-	init9252(&ethercat_slave);
+	//init9252(&ethercat_slave); // change this !!!!!!!!!!!!!!
 	
 	HAL_Delay(100);
 	
@@ -588,10 +674,11 @@ int main(void)
 		  unpack_reply(&rx_header, rx_data);
 		  
 	  }
+	  /*
 	  if (HAL_FDCAN_GetRxMessage(&hfdcan2, FDCAN_RX_FIFO0, &rx_header, rx_data) == HAL_OK)
 	  {
 		  unpack_reply(&rx_header, rx_data);
-	  }
+	  }*/
 	  delay_us(10);
   }
   /* USER CODE END 3 */
@@ -1055,6 +1142,8 @@ void send_to_all_slave()
 	}
 
 
+
+
 	if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &joint_2, joint_2_data) != HAL_OK)
 	{
 		can1_error_counter += 1;
@@ -1094,6 +1183,8 @@ void send_to_all_slave()
 //	{
 //		can2_error_counter += 1;
 //	}
+
+
 }
 
 void pack_motor_data()
@@ -1137,6 +1228,9 @@ void pack_motor_data()
 
 void control()
 {	
+	if (control_word==0)
+			control_word=1;
+
 	if (control_word == 1)
 	{
 		if (is_init == 0)   // init
@@ -1169,7 +1263,8 @@ void control()
 		}
 		
 		is_run = 0;
-		send_to_all_slave();		
+		send_to_all_slave();
+		control_word=2;
 	}		
 	else if (control_word == 2)  // parameter 
 	{
@@ -1204,12 +1299,16 @@ void control()
 		}
 		else if (is_run == 1)
 		{
-			motor_pd(&joint_1, joint_1_data, BufferOut.Cust.motor_1_1, 1);
+			/*motor_pd(&joint_1, joint_1_data, BufferOut.Cust.motor_1_1, 1);
 			motor_pd(&joint_2, joint_2_data, BufferOut.Cust.motor_2_1, 2);
 			motor_pd(&joint_3, joint_3_data, BufferOut.Cust.motor_3_1, 3);
 			motor_pd(&joint_4, joint_4_data, BufferOut.Cust.motor_4_1, 4);
 			motor_null(&joint_5, joint_5_data, 5);
-//			motor_null(&joint_6, joint_6_data, 6);	
+//			motor_null(&joint_6, joint_6_data, 6);	*/
+			motor_pd0(&joint_1, joint_1_data, 1); // change this !!!!!!!!!!!
+			motor_pd0(&joint_2, joint_2_data, 2);
+			motor_pd0(&joint_3, joint_3_data, 3);
+			motor_pd0(&joint_4, joint_4_data, 4);
 			
 			pos0[0] = pos1;
 			pos0[1] = pos2;
@@ -1231,7 +1330,35 @@ void control()
 //			byte_8.buffer[4] = 0x00; byte_8.buffer[5] = 0x00; byte_8.buffer[6] = 0x00; byte_8.buffer[7] = 0x00;	
 //			pos_1_ref64 = byte_8.udata;
 //			motor_pvt(&joint_1, joint_1_data, pos_1_ref64, 1);	
-			motor_pvt(&joint_1, joint_1_data, BufferOut.Cust.motor_1, 1);
+			float_t pos1_dst=0;
+
+			if (fabs(pos1_dst-pos1)>0.1 && startFlag==0 ) // 60 deg/s -> 0.06 deg/ms
+				pos1_pid=pos1+sign_dbl(pos1_dst-pos1)*0.09;
+			else if (startFlag==0 && pos1!=0)
+				{pos1_pid=pos1; startFlag=1;pos_cnt[0]=0;}
+
+			if (startFlag==1)
+				{pos1_pid=20.0*sin(2.0f * 3.14159265359f*pos_cnt[0] / we[0]);
+				pos_cnt[0]++;
+				}
+
+			float_t p1=700;
+			float_t d1=8;
+
+			I1=p1*(pos1_pid-pos1)+d1*(0-vel1);
+			//I1=0;
+			if (I1>1000)
+				I1=1000;
+			if (I1<-1000)
+				I1=-1000;
+
+			byte_2_reply.udata=(int16_t)(I1+sign_dbl(I1)*0.5);
+			byte_8.buffer[0] = 0x00; byte_8.buffer[1] = 0x00; // pos
+			byte_8.buffer[2] = 0x00; byte_8.buffer[3] = 0x00; // speed
+			byte_8.buffer[4] = byte_2_reply.buffer[0]; byte_8.buffer[5] = byte_2_reply.buffer[1]; // torque
+			byte_8.buffer[6] = 0x00; byte_8.buffer[7] = 0x00; // unused
+			pos_1_ref64 = byte_8.udata;
+			motor_pvt(&joint_1, joint_1_data, pos_1_ref64, 1);
 		
 //			if (pos_cnt[1] < (int)we[1])
 //				pos_cnt[1]++;
@@ -1243,7 +1370,7 @@ void control()
 //			byte_8.buffer[4] = 0x00; byte_8.buffer[5] = 0x00; byte_8.buffer[6] = 0x00; byte_8.buffer[7] = 0x00;	
 //			pos_2_ref64 = byte_8.udata;
 //			motor_pvt(&joint_2, joint_2_data, pos_2_ref64, 2);	
-			motor_pvt(&joint_2, joint_2_data, BufferOut.Cust.motor_2, 2);
+			//motor_pvt(&joint_2, joint_2_data, BufferOut.Cust.motor_2, 2);
 		
 //			if (pos_cnt[2] < (int)we[2])
 //				pos_cnt[2]++;
@@ -1255,7 +1382,7 @@ void control()
 //			byte_8.buffer[4] = 0x00; byte_8.buffer[5] = 0x00; byte_8.buffer[6] = 0x00; byte_8.buffer[7] = 0x00;	
 //			pos_3_ref64 = byte_8.udata;
 //			motor_pvt(&joint_3, joint_3_data, pos_3_ref64, 3);	
-			motor_pvt(&joint_3, joint_3_data, BufferOut.Cust.motor_3, 3);
+			//motor_pvt(&joint_3, joint_3_data, BufferOut.Cust.motor_3, 3);
 		
 //			if (pos_cnt[3] < (int)we[3])
 //				pos_cnt[3]++;
@@ -1267,7 +1394,7 @@ void control()
 //			byte_8.buffer[4] = 0x00; byte_8.buffer[5] = 0x00; byte_8.buffer[6] = 0x00; byte_8.buffer[7] = 0x00;	
 //			pos_4_ref64 = byte_8.udata;
 //			motor_pvt(&joint_4, joint_4_data, pos_4_ref64, 4);
-			motor_pvt(&joint_4, joint_4_data, BufferOut.Cust.motor_4, 4);
+			//motor_pvt(&joint_4, joint_4_data, BufferOut.Cust.motor_4, 4);
 			
 //			if (pos_cnt[5] < (int)we[5])
 //				pos_cnt[5]++;
@@ -1279,7 +1406,7 @@ void control()
 //			byte_8.buffer[4] = 0x00; byte_8.buffer[5] = 0x00; byte_8.buffer[6] = 0x00; byte_8.buffer[7] = 0x00;	
 //			pos_s_ref64 = byte_8.udata;
 //			motor_steer_enable(&joint_5, joint_5_data, pos_s_ref64, 5);
-			motor_steer_enable(&joint_5, joint_5_data, BufferOut.Cust.motor_6, 5);
+			//motor_steer_enable(&joint_5, joint_5_data, BufferOut.Cust.motor_6, 5);
 		}		
 		is_init = 0;
 		send_to_all_slave();
@@ -1296,11 +1423,11 @@ void control()
 		is_run = 0;
 		send_to_all_slave();
 		
-		HAL_GPIO_WritePin(GPIOA, ES_Pin, GPIO_PIN_SET);
+		//HAL_GPIO_WritePin(GPIOA, ES_Pin, GPIO_PIN_SET);
 	}
 	else  // stop
 	{		
-		HAL_GPIO_WritePin(GPIOA, ES_Pin, GPIO_PIN_SET);
+		//HAL_GPIO_WritePin(GPIOA, ES_Pin, GPIO_PIN_SET);
 	}
 }
 
@@ -1352,15 +1479,15 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
 	if (htim->Instance == TIM5)
 	{		
-		pack_ethercat_data();
-		main_task(&ethercat_slave);
+		//pack_ethercat_data();                // change this !!!!!!!!!!!
+		//main_task(&ethercat_slave);          // change this !!!!!!!!!!!!
 		
 		uint64_t tmp_hs_ = 1;//BufferOut.Cust.hs; // change this !!!!!!!!!!!!!
 		
 		// 1. control
 		if (tmp_hs_ > hs_ || tmp_hs_ == 1)
 		{
-			control_word = BufferOut.Cust.control_word;						
+			//control_word = BufferOut.Cust.control_word; // and commit this !!!!!!!!!!!!
 			control();			
 			hs_ = tmp_hs_;			
 		}
