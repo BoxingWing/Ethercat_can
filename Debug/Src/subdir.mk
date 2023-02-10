@@ -5,6 +5,8 @@
 
 # Add inputs and outputs from these tool invocations to the build variables 
 C_SRCS += \
+../Src/Global_var.c \
+../Src/Motor_Untilities.c \
 ../Src/main.c \
 ../Src/stm32h7xx_hal_msp.c \
 ../Src/stm32h7xx_it.c \
@@ -13,6 +15,8 @@ C_SRCS += \
 ../Src/system_stm32h7xx.c 
 
 OBJS += \
+./Src/Global_var.o \
+./Src/Motor_Untilities.o \
 ./Src/main.o \
 ./Src/stm32h7xx_hal_msp.o \
 ./Src/stm32h7xx_it.o \
@@ -21,6 +25,8 @@ OBJS += \
 ./Src/system_stm32h7xx.o 
 
 C_DEPS += \
+./Src/Global_var.d \
+./Src/Motor_Untilities.d \
 ./Src/main.d \
 ./Src/stm32h7xx_hal_msp.d \
 ./Src/stm32h7xx_it.d \
@@ -36,7 +42,7 @@ Src/%.o Src/%.su: ../Src/%.c Src/subdir.mk
 clean: clean-Src
 
 clean-Src:
-	-$(RM) ./Src/main.d ./Src/main.o ./Src/main.su ./Src/stm32h7xx_hal_msp.d ./Src/stm32h7xx_hal_msp.o ./Src/stm32h7xx_hal_msp.su ./Src/stm32h7xx_it.d ./Src/stm32h7xx_it.o ./Src/stm32h7xx_it.su ./Src/syscalls.d ./Src/syscalls.o ./Src/syscalls.su ./Src/sysmem.d ./Src/sysmem.o ./Src/sysmem.su ./Src/system_stm32h7xx.d ./Src/system_stm32h7xx.o ./Src/system_stm32h7xx.su
+	-$(RM) ./Src/Global_var.d ./Src/Global_var.o ./Src/Global_var.su ./Src/Motor_Untilities.d ./Src/Motor_Untilities.o ./Src/Motor_Untilities.su ./Src/main.d ./Src/main.o ./Src/main.su ./Src/stm32h7xx_hal_msp.d ./Src/stm32h7xx_hal_msp.o ./Src/stm32h7xx_hal_msp.su ./Src/stm32h7xx_it.d ./Src/stm32h7xx_it.o ./Src/stm32h7xx_it.su ./Src/syscalls.d ./Src/syscalls.o ./Src/syscalls.su ./Src/sysmem.d ./Src/sysmem.o ./Src/sysmem.su ./Src/system_stm32h7xx.d ./Src/system_stm32h7xx.o ./Src/system_stm32h7xx.su
 
 .PHONY: clean-Src
 

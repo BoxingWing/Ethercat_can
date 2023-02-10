@@ -21,7 +21,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "Global_var.h"
 #include "../lan9252/lan9252.h"
+#include "Motor_Untilities.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -81,6 +83,17 @@ uint64_t joint_static_pvt;
 FDCAN_RxHeaderTypeDef rx_header;
 uint8_t rx_data[8];
 
+uint32_t can1_error_counter = 0;
+uint32_t can2_error_counter = 0;
+uint32_t can1_last_error_code = 0;
+uint32_t can2_last_error_code = 0;
+
+uint16_t control_word;
+GPIO_PinState ES_state;
+int is_init = 0;
+int is_run = 0;
+uint32_t init_counter = 0;
+
 // for ethercat var
 uint64_t hs_ = 0;
 uint8_t error_hs_ = 0;
@@ -91,36 +104,15 @@ double we[6] = { 8000.0, 8000.0, 8000.0, 8000.0, 8000.0, 8000.0 };
 double pos_ref[6] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
 double pos0[6] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
 
-union Byte8
-{
-	uint64_t udata;
-	uint8_t buffer[8];
-};
-union Byte4
-{
-	uint32_t udata;
-	uint8_t buffer[4];
-};
 
-union Byte2u
-{
-	uint16_t udata;
-	uint8_t buffer[2];
-};
+extern union Byte8 byte_8;
+extern union Byte8 byte_8_reply;
+extern union Byte8 byte_8_static;
+extern union Byte2 byte_2_reply;
+extern union Byte2u byte_2u_reply;
+extern union Byte4 byte_4_reply;
 
-union Byte2
-{
-	int16_t udata;
-	int8_t buffer[2];
-};
-
-
-union Byte8 byte_8;
-union Byte8 byte_8_reply;
-union Byte8 byte_8_static;
-union Byte2 byte_2_reply;
-union Byte2u byte_2u_reply;
-union Byte4 byte_4_reply;
+extern struct motor_info MF_1;
 
 float_t pos1 = 0;
 float_t vel1 = 0;
@@ -128,21 +120,21 @@ float_t tor1 = 0;
 float_t pos1_old=0;
 float_t vel1_cal=0;
 
-double_t pos2 = 0;
-double_t vel2 = 0;
-double_t tor2 = 0;
-double_t pos3 = 0;
-double_t vel3 = 0;
-double_t tor3 = 0;
-double_t pos4 = 0;
-double_t vel4 = 0;
-double_t tor4 = 0;
-double_t pos1_ref = 0;
-double_t vel1_ref = 0;
-double_t tor1_ref = 0;
-double_t pos_s = 0;
-double_t pos_p1 = 0;
-double_t pos_p2 = 0;
+float_t pos2 = 0;
+float_t vel2 = 0;
+float_t tor2 = 0;
+float_t pos3 = 0;
+float_t vel3 = 0;
+float_t tor3 = 0;
+float_t pos4 = 0;
+float_t vel4 = 0;
+float_t tor4 = 0;
+float_t pos1_ref = 0;
+float_t vel1_ref = 0;
+float_t tor1_ref = 0;
+float_t pos_s = 0;
+float_t pos_p1 = 0;
+float_t pos_p2 = 0;
 
 uint64_t pos_1_ref64 = 0;
 uint64_t pos_2_ref64 = 0;
@@ -162,9 +154,17 @@ float_t TD_x1_old=0;
 float_t TD_x1=0;
 float_t TD_x2_old=0;
 float_t TD_x2=0;
-float_t TD_iniCount=5;
-const float_t TD_r=200;
+float_t TD_iniCount=4;
+const float_t TD_r=700;
 const float_t TD_h=0.001;
+
+float_t mul_pos=0;
+float_t sgl_pos=0;
+float_t tor_pos=0;
+float_t vel_cur=0;
+float_t vel_cur_fil=0;
+
+int64_t loop_1ms_count=0;
 
 /* USER CODE END PV */
 
@@ -180,11 +180,141 @@ static void MX_TIM4_Init(void);
 static void MX_TIM5_Init(void);
 static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
+void send_to_all_slave();
+void send_to_all_slave_sgl();
+void send_to_all_slave_mul();
+void send_to_all_slave_cur0();
 
 void delay_us(uint16_t us)
 {
 	__HAL_TIM_SET_COUNTER(&htim4, 0); 
 	while (__HAL_TIM_GET_COUNTER(&htim4) < us) ;
+}
+
+void control()
+{
+	loop_1ms_count++;
+	if (loop_1ms_count==6)
+		loop_1ms_count=0;
+
+	if (control_word==0)
+			control_word=1;
+
+	if (control_word == 1)
+	{
+		if (is_init == 0)   // init
+		{
+			if (init_counter < 20)
+			{
+				init_counter++;
+			}
+			else
+			{
+				init_counter = 0;
+				is_init = 1;
+			}
+			if (loop_1ms_count%2==0)
+				send_to_all_slave_sgl();
+			if (loop_1ms_count%2==1)
+				send_to_all_slave_cur0();
+		}
+		else  // get data
+		{
+			control_word=2;
+		}
+
+		is_run = 0;
+	}
+	else if (control_word == 2)  // parameter
+	{
+		if (is_run == 0)
+		{
+			is_run = 1;
+		}
+		else if (is_run == 1)
+		{
+			is_run = 2;
+		}
+		else
+		{
+//			if (pos_cnt[0] < (int)we[0])
+//				pos_cnt[0]++;
+//			else
+//				pos_cnt[0] = 0;
+//			pos_ref[0] = pos0[0];// + 20.0 - 20.0*cos(2.0f * 3.14159265359f*pos_cnt[0] / we[0]);
+//			byte_2_reply.udata = (uint16_t)(pos_ref[0] / 0.01);
+//			byte_8.buffer[0] = byte_2_reply.buffer[0]; byte_8.buffer[1] = byte_2_reply.buffer[1]; byte_8.buffer[2] = 0x00; byte_8.buffer[3] = 0x00;
+//			byte_8.buffer[4] = 0x00; byte_8.buffer[5] = 0x00; byte_8.buffer[6] = 0x00; byte_8.buffer[7] = 0x00;
+//			pos_1_ref64 = byte_8.udata;
+//			motor_pvt(&joint_1, joint_1_data, pos_1_ref64, 1);
+
+			float_t pos1_dst=0;
+
+			if (fabs(pos1_dst-MF_1.out_Pos)>0.1 && startFlag==0 ) // 60 deg/s -> 0.06 deg/ms
+				pos1_pid=MF_1.out_Pos+sign_dbl(pos1_dst-MF_1.out_Pos)*0.09;
+			else if (startFlag==0 && MF_1.out_Pos!=0)
+				{pos1_pid=MF_1.out_Pos; startFlag=1;pos_cnt[0]=0;}
+
+			if (startFlag==1)
+				{pos1_pid=20.0*sin(2.0f * 3.14159265359f*pos_cnt[0] / we[0]);
+				pos_cnt[0]++;
+				}
+
+			float_t p1=1000;
+			float_t d1=10;
+
+			I1=p1*(pos1_pid-MF_1.out_Pos)+d1*(0-MF_1.out_Vel_fil);
+			//I1=0;
+
+			if (I1>1000)
+				I1=1000;
+			if (I1<-1000)
+				I1=-1000;
+
+			/*byte_2_reply.udata=(int16_t)(I1+0.5);
+			byte_8.buffer[0] = 0x00; byte_8.buffer[1] = 0x00; // pos
+			byte_8.buffer[2] = 0x00; byte_8.buffer[3] = 0x00; // speed
+			byte_8.buffer[4] = byte_2_reply.buffer[0]; byte_8.buffer[5] = byte_2_reply.buffer[1]; // torque
+			byte_8.buffer[6] = 0x00; byte_8.buffer[7] = 0x00; // unused
+			pos_1_ref64 = byte_8.udata;
+			motor_pvt(&joint_1, joint_1_data, pos_1_ref64, 1);*/
+
+			motor_current(&joint_1, joint_1_data, (int16_t)(I1+0.5), 1);
+
+			/*if (loop_1ms_count%2==0)
+				motor_current(&joint_1, joint_1_data, (int16_t)(I1+0.5), 1);
+			if (loop_1ms_count%2==1)
+				motor_get_mulPos(&joint_1, joint_1_data, 1);*/
+
+			send_to_all_slave();
+
+			/*
+			if (loop_1ms_count%2==0)
+				send_to_all_slave_cur0();
+			if (loop_1ms_count%2==1)
+				send_to_all_slave_sgl();*/
+
+		}
+		is_init = 0;
+	}
+	else if(control_word == 3)  // stop
+	{
+		motor_es(&joint_1, joint_1_data, 1);
+		motor_es(&joint_2, joint_2_data, 2);
+		motor_es(&joint_3, joint_3_data, 3);
+		motor_es(&joint_4, joint_4_data, 4);
+
+		motor_null(&joint_5, joint_5_data, 5);
+
+		is_run = 0;
+		send_to_all_slave();
+
+		//HAL_GPIO_WritePin(GPIOA, ES_Pin, GPIO_PIN_SET);
+	}
+	else  // stop
+	{
+		//HAL_GPIO_WritePin(GPIOA, ES_Pin, GPIO_PIN_SET);
+	}
 }
 
 void unpack_reply(FDCAN_RxHeaderTypeDef *pRxHeader, uint8_t *data)
@@ -215,9 +345,10 @@ void unpack_reply(FDCAN_RxHeaderTypeDef *pRxHeader, uint8_t *data)
 
 			if (id == 1)
 			{
-				byte_2_reply.buffer[0] = data[2];
-				byte_2_reply.buffer[1] = data[3];
-				pos1 = (float_t)byte_2_reply.udata * 0.01;
+				if (data[0]==0xAF)
+				{
+				motor_decode_pvt(data, &pos1, &vel1, &tor1);
+
 				if (pos1>180)
 					pos1=pos1-360;
 				if (pos1<-180)
@@ -229,14 +360,6 @@ void unpack_reply(FDCAN_RxHeaderTypeDef *pRxHeader, uint8_t *data)
 				if (tmp>1000 || tmp<-1000)
 					tmp=0;
 				vel1_cal=tmp;
-				// ----
-
-				byte_2_reply.buffer[0] = data[4];
-				byte_2_reply.buffer[1] = data[5];
-				vel1 = (float_t)byte_2_reply.udata;
-				byte_2_reply.buffer[0] = data[6];
-				byte_2_reply.buffer[1] = data[7];
-				tor1 = (float_t)byte_2_reply.udata * 66.0 / 4096;
 
 				// vel from low pass of vel feedback
 				for (int i=0;i<2;i++)
@@ -267,43 +390,122 @@ void unpack_reply(FDCAN_RxHeaderTypeDef *pRxHeader, uint8_t *data)
 				vel1_fil=TD_x2;
 
 				pos1_old=pos1;
+				}
+
+				if (data[0]==0x94)
+				{
+					/*float pos_tmp;
+					motor_decode_sglPos(data, &pos_tmp);
+					MF_1.sgl_pos_old=MF_1.sgl_pos;
+					MF_1.sgl_pos=pos_tmp;
+
+					if (MF_1.iniReady>0)
+					{
+						if (MF_1.sgl_pos-MF_1.sgl_pos_old<-300)
+							MF_1.loopNum++;
+						if (MF_1.sgl_pos-MF_1.sgl_pos_old>300)
+							MF_1.loopNum--;
+
+						pos_tmp=(MF_1.sgl_pos+MF_1.pos_off+MF_1.loopNum*360.)/MF_1.ratio;
+						if (pos_tmp>180)
+							pos_tmp-=360;
+
+						MF_1.out_Pos=pos_tmp;
+					}*/
+
+					if (MF_1.sgl_pos_old!=0 && MF_1.pos_off!=0)
+						MF_1.iniReady=1;
+
+					sgl_pos=MF_1.sgl_pos;
+
+					float_t pos_tmp;
+					motor_decode_sglPos(data, &pos_tmp);
+					//pos_tmp=pos_tmp-floor(pos_tmp/360)*360; // round to 0-360
+					MF_1.mul_pos=pos_tmp;
+					if (MF_1.sgl_pos_old!=0 && MF_1.sgl_pos!=0 && MF_1.iniReady==0)
+					{
+						MF_1.pos_off=MF_1.mul_pos-MF_1.sgl_pos;
+						MF_1.loopNum=0;
+						MF_1.iniReady=1;
+					}
+
+					mul_pos=MF_1.mul_pos/10.0;
+				}
+				if (data[0]==0x92)
+				{
+					float_t pos_tmp;
+					motor_decode_mulPos(data, &pos_tmp);
+					//pos_tmp=pos_tmp-floor(pos_tmp/360)*360; // round to 0-360
+					MF_1.mul_pos=pos_tmp;
+					if (MF_1.sgl_pos_old!=0 && MF_1.sgl_pos!=0 && MF_1.iniReady==0)
+					{
+						MF_1.pos_off=MF_1.mul_pos-MF_1.sgl_pos;
+						MF_1.loopNum=0;
+						MF_1.iniReady=1;
+					}
+
+					mul_pos=MF_1.mul_pos/10.0;
+
+				}
+				if (data[0]==0xa1)
+				{
+					float_t pos_tmp, vel_tmp, tor_tmp;
+					motor_decode_cur(data, &pos_tmp, &vel_tmp, &tor_tmp);
+					MF_1.sgl_pos_old=MF_1.sgl_pos;
+					MF_1.sgl_pos=pos_tmp;
+					MF_1.vel=vel_tmp;
+					MF_1.tor=tor_tmp;
+					MF_1.out_Vel=vel_tmp/10;
+
+					if (MF_1.iniReady>0)
+					{
+						if (MF_1.sgl_pos-MF_1.sgl_pos_old<-300)
+							MF_1.loopNum++;
+						if (MF_1.sgl_pos-MF_1.sgl_pos_old>300)
+							MF_1.loopNum--;
+
+						pos_tmp=(MF_1.sgl_pos+MF_1.pos_off+MF_1.loopNum*360.)/MF_1.ratio;
+						if (pos_tmp>180)
+							pos_tmp-=360;
+
+						MF_1.out_Pos=pos_tmp;
+					}
+
+					if (TD_iniCount==0)
+					{
+						TD_x1=TD_x1_old+TD_h*TD_x2_old;
+						TD_x2=TD_x2_old-TD_h*(TD_r*TD_r*TD_x1_old+2*TD_r*TD_x2_old-TD_r*TD_r*MF_1.out_Pos);
+						TD_x1_old=TD_x1;
+						TD_x2_old=TD_x2;
+					}
+					else
+					{
+						TD_iniCount--;
+						TD_x1_old=MF_1.out_Pos;
+						TD_x2_old=MF_1.out_Vel;
+						TD_x1=MF_1.out_Pos;
+						TD_x2=MF_1.out_Vel;
+					}
+
+					MF_1.out_Vel_fil=TD_x2;
+
+					tor_pos=MF_1.out_Pos;
+					vel_cur=MF_1.out_Vel;
+					vel_cur_fil=MF_1.out_Vel_fil;
+				}
 			}			
 			if (id == 2)
 			{
-				byte_2_reply.buffer[0] = data[2];
-				byte_2_reply.buffer[1] = data[3];
-				pos2 = (double_t)byte_2_reply.udata * 0.01;
-				byte_2_reply.buffer[0] = data[4];
-				byte_2_reply.buffer[1] = data[5];
-				vel2 = (double_t)byte_2_reply.udata;
-				byte_2_reply.buffer[0] = data[6];
-				byte_2_reply.buffer[1] = data[7];
-				tor2 = (double_t)byte_2_reply.udata * 66.0 / 4096;
+				motor_decode_pvt(data, &pos2, &vel2, &tor2);
 			}
 			if (id == 3)
 			{
-				byte_2_reply.buffer[0] = data[2];
-				byte_2_reply.buffer[1] = data[3];
-				pos3 = (double_t)byte_2_reply.udata * 0.01;
-				byte_2_reply.buffer[0] = data[4];
-				byte_2_reply.buffer[1] = data[5];
-				vel3 = (double_t)byte_2_reply.udata;
-				byte_2_reply.buffer[0] = data[6];
-				byte_2_reply.buffer[1] = data[7];
-				tor3 = (double_t)byte_2_reply.udata * 66.0 / 4096;			
+				motor_decode_pvt(data, &pos3, &vel3, &tor3);
 			}			
 			
 			if (id == 4)
 			{
-				byte_2_reply.buffer[0] = data[2];
-				byte_2_reply.buffer[1] = data[3];
-				pos4 = (double_t)byte_2_reply.udata * 0.01;
-				byte_2_reply.buffer[0] = data[4];
-				byte_2_reply.buffer[1] = data[5];
-				vel4 = (double_t)byte_2_reply.udata;
-				byte_2_reply.buffer[0] = data[6];
-				byte_2_reply.buffer[1] = data[7];
-				tor4 = (double_t)byte_2_reply.udata * 66.0 / 4096;
+				motor_decode_pvt(data, &pos4, &vel4, &tor4);
 			}
 			if (id == 5)
 			{
@@ -328,156 +530,6 @@ void unpack_reply(FDCAN_RxHeaderTypeDef *pRxHeader, uint8_t *data)
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void motor_enable(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, uint32_t Id)
-{
-	joint_tx->DataLength = FDCAN_DLC_BYTES_8;
-	joint_tx->Identifier = Id + 0x140;
-	data_buffer[0] = 0xff;
-	data_buffer[1] = 0xff;
-	data_buffer[2] = 0xff;
-	data_buffer[3] = 0xff;
-	data_buffer[4] = 0xff;
-	data_buffer[5] = 0xff;
-	data_buffer[6] = 0xff;
-	data_buffer[7] = 0xfc;
-}
-
-void motor_pd0(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, uint32_t Id)
-{
-	joint_tx->DataLength = FDCAN_DLC_BYTES_8;
-	joint_tx->Identifier = Id + 0x140;
-	data_buffer[0] = 0xaf;
-	data_buffer[1] = 0x01;
-	data_buffer[2] = 0x00;
-	data_buffer[3] = 0x00;
-	data_buffer[4] = 0x00;
-	data_buffer[5] = 0x00;
-	data_buffer[6] = 0x00;
-	data_buffer[7] = 0x00;
-}
-
-void motor_pvt0(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, uint32_t Id)
-{
-	joint_tx->DataLength = FDCAN_DLC_BYTES_8;
-	joint_tx->Identifier = Id + 0x140;
-	data_buffer[0] = 0xae;
-	data_buffer[1] = 0x00;
-	data_buffer[2] = 0x00;
-	data_buffer[3] = 0x00;
-	data_buffer[4] = 0x00;
-	data_buffer[5] = 0x00;
-	data_buffer[6] = 0x00;
-	data_buffer[7] = 0x00;
-}
-
-void motor_pd(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, uint64_t data_in, uint32_t Id)
-{
-	joint_tx->DataLength = FDCAN_DLC_BYTES_8;
-	joint_tx->Identifier = Id + 0x140;
-	byte_8.udata = data_in;	
-	
-	data_buffer[0] = 0xaf;
-	data_buffer[1] = 0x01;		
-	data_buffer[2] = byte_8.buffer[0];
-	data_buffer[3] = byte_8.buffer[1];
-	data_buffer[4] = byte_8.buffer[2];
-	data_buffer[5] = byte_8.buffer[3];
-	data_buffer[6] = 0x00;
-	data_buffer[7] = 0x00;
-}
-void motor_pvt(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, uint64_t data_in, uint32_t Id)
-{
-	joint_tx->DataLength = FDCAN_DLC_BYTES_8;
-	joint_tx->Identifier = Id + 0x140;
-	byte_8.udata = data_in;	
-	
-	data_buffer[0] = 0xae;
-	data_buffer[1] = 0x00;		
-	data_buffer[2] = byte_8.buffer[0];
-	data_buffer[3] = byte_8.buffer[1];
-	data_buffer[4] = byte_8.buffer[2];
-	data_buffer[5] = byte_8.buffer[3];
-	data_buffer[6] = byte_8.buffer[4];
-	data_buffer[7] = byte_8.buffer[5];
-}
-
-void motor_es(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, uint32_t Id)
-{
-	joint_tx->DataLength = FDCAN_DLC_BYTES_8;
-	joint_tx->Identifier = Id + 0x140;
-	
-	data_buffer[0] = 0x08;
-	data_buffer[1] = 0x00;		
-	data_buffer[2] = 0x00;
-	data_buffer[3] = 0x00;
-	data_buffer[4] = 0x00;
-	data_buffer[5] = 0x00;
-	data_buffer[6] = 0x00;
-	data_buffer[7] = 0x00;
-}
-
-
-void motor_steer_init(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, uint32_t Id)
-{
-	joint_tx->DataLength = FDCAN_DLC_BYTES_8;
-	joint_tx->Identifier = Id + 0x140;
-	
-	data_buffer[0] = 0x02;
-	data_buffer[1] = 0x00;		
-	data_buffer[2] = 0x00;
-	data_buffer[3] = 0x00;
-	data_buffer[4] = 0x00;
-	data_buffer[5] = 0x00;
-	data_buffer[6] = 0x00;
-	data_buffer[7] = 0x00;
-}
-
-void motor_steer_enable(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, uint64_t data_in, uint32_t Id)
-{
-	joint_tx->DataLength = FDCAN_DLC_BYTES_8;
-	joint_tx->Identifier = Id + 0x140;
-	byte_8.udata = data_in;		
-	
-	data_buffer[0] = 0x01;
-	data_buffer[1] = 0x00;		
-	data_buffer[2] = byte_8.buffer[0];
-	data_buffer[3] = byte_8.buffer[1];
-	data_buffer[4] = byte_8.buffer[2];
-	data_buffer[5] = byte_8.buffer[3];
-	data_buffer[6] = 0x00;
-	data_buffer[7] = 0x00;
-}
-
-void motor_null(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, uint32_t Id)
-{
-	joint_tx->DataLength = FDCAN_DLC_BYTES_8;
-	joint_tx->Identifier = Id + 0x140;	
-	
-	data_buffer[0] = 0x00;
-	data_buffer[1] = 0x00;		
-	data_buffer[2] = 0x00;
-	data_buffer[3] = 0x00;
-	data_buffer[4] = 0x00;
-	data_buffer[5] = 0x00;
-	data_buffer[6] = 0x00;
-	data_buffer[7] = 0x00;
-}
-
-void motor_current(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, int16_t data_in, uint32_t Id)
-{
-	joint_tx->DataLength = FDCAN_DLC_BYTES_8;
-	joint_tx->Identifier = Id + 0x140;
-	byte_2_reply.udata = data_in;
-
-	data_buffer[0] = 0xa1;
-	data_buffer[1] = 0x00;
-	data_buffer[2] = 0;
-	data_buffer[3] = 0;
-	data_buffer[4] = byte_2_reply.buffer[0];
-	data_buffer[5] = byte_2_reply.buffer[1];
-	data_buffer[6] = 0x00;
-	data_buffer[7] = 0x00;
-}
 
 #define cmd_null 0x0000
 
@@ -490,47 +542,7 @@ void motor_current(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, int16_
 #define cmd_motor_read 0x00af
 #define cmd_motor_es  0x0008
 
-void motor_cmd(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, uint8_t cmd, uint32_t Id)
-{
-	joint_tx->DataLength = FDCAN_DLC_BYTES_8;
-	joint_tx->Identifier = Id + 0x140;
-	
-	data_buffer[0] = (uint8_t)cmd & 0x000000ff;
-	data_buffer[1] = ((uint8_t)cmd >> 2UL) & 0x000000ff; 	
-	data_buffer[2] = 0x00;
-	data_buffer[3] = 0x00;
-	data_buffer[4] = 0x00;
-	data_buffer[5] = 0x00;
-	data_buffer[6] = 0x00;
-	data_buffer[7] = 0x00;
-}
 
-void motor_data(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, uint64_t data_in, uint8_t cmd, uint32_t Id)
-{
-	joint_tx->DataLength = FDCAN_DLC_BYTES_8;
-	joint_tx->Identifier = Id + 0x140;
-	byte_8.udata = data_in;
-	
-	data_buffer[0] = (uint8_t)cmd & 0x000000ff;
-	data_buffer[1] = ((uint8_t)cmd >> 2UL) & 0x000000ff; 	
-	data_buffer[2] = byte_8.buffer[0];
-	data_buffer[3] = byte_8.buffer[1];
-	data_buffer[4] = byte_8.buffer[2];
-	data_buffer[5] = byte_8.buffer[3];
-	data_buffer[6] = byte_8.buffer[4];
-	data_buffer[7] = byte_8.buffer[5];
-}
-
-float_t sign_dbl(float_t data)
-{
-	if (data>0)
-		return 1.0;
-	else if (data<0)
-		return -1.0;
-	else
-		return 0.0;
-
-}
 /* USER CODE END 0 */
 
 /**
@@ -672,7 +684,6 @@ int main(void)
 	  if (HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &rx_header, rx_data) == HAL_OK)
 	  {
 		  unpack_reply(&rx_header, rx_data);
-		  
 	  }
 	  /*
 	  if (HAL_FDCAN_GetRxMessage(&hfdcan2, FDCAN_RX_FIFO0, &rx_header, rx_data) == HAL_OK)
@@ -1113,18 +1124,6 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
-
-uint32_t can1_error_counter = 0;
-uint32_t can2_error_counter = 0;
-uint32_t can1_last_error_code = 0;
-uint32_t can2_last_error_code = 0;
-
-uint16_t control_word;
-GPIO_PinState ES_state;
-int is_init = 0;
-int is_run = 0;
-uint32_t init_counter = 0;
-
 //int is_enable = 0;
 //int motor_init_state = 0;
 
@@ -1143,7 +1142,7 @@ void send_to_all_slave()
 
 
 
-
+/*
 	if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &joint_2, joint_2_data) != HAL_OK)
 	{
 		can1_error_counter += 1;
@@ -1182,11 +1181,36 @@ void send_to_all_slave()
 //	if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan2, &joint_6, joint_6_data) != HAL_OK)
 //	{
 //		can2_error_counter += 1;
-//	}
+//	}*/
 
+}
+void send_to_all_slave_sgl()
+{
+	motor_get_sglPos(&joint_1, joint_1_data, 1);
+	if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &joint_1, joint_1_data) != HAL_OK)
+	{
+		can1_error_counter += 1;
+	}
 
 }
 
+void send_to_all_slave_mul()
+{
+	motor_get_mulPos(&joint_1, joint_1_data, 1);
+	if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &joint_1, joint_1_data) != HAL_OK)
+	{
+		can1_error_counter += 1;
+	}
+}
+
+void send_to_all_slave_cur0()
+{
+	motor_current(&joint_1, joint_1_data, 0, 1);
+	if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &joint_1, joint_1_data) != HAL_OK)
+	{
+		can1_error_counter += 1;
+	}
+}
 void pack_motor_data()
 {
 	byte_8.udata = BufferOut.Cust.motor_1;
@@ -1223,211 +1247,6 @@ void pack_motor_data()
 	for (size_t i = 0; i < 8; i++)
 	{
 		joint_6_data[i] = byte_8.buffer[i];
-	}
-}
-
-void control()
-{	
-	if (control_word==0)
-			control_word=1;
-
-	if (control_word == 1)
-	{
-		if (is_init == 0)   // init
-		{
-			motor_pd0(&joint_1, joint_1_data, 1);
-			motor_pd0(&joint_2, joint_2_data, 2);
-			motor_pd0(&joint_3, joint_3_data, 3);
-			motor_pd0(&joint_4, joint_4_data, 4);
-//			motor_null(&joint_5, joint_5_data, 5);
-//			motor_steer_init(&joint_6, joint_6_data, 6);
-			motor_steer_init(&joint_5, joint_5_data, 5);
-			if (init_counter < 10)
-			{
-				init_counter++;
-			}
-			else
-			{
-				init_counter = 0;
-				is_init = 1;
-			}
-		}
-		else  // get data
-		{
-			motor_pvt0(&joint_1, joint_1_data, 1);
-			motor_pvt0(&joint_2, joint_2_data, 2);
-			motor_pvt0(&joint_3, joint_3_data, 3);
-			motor_pvt0(&joint_4, joint_4_data, 4);
-			motor_null(&joint_5, joint_5_data, 5);
-//			motor_null(&joint_6, joint_6_data, 6);
-		}
-		
-		is_run = 0;
-		send_to_all_slave();
-		control_word=2;
-	}		
-	else if (control_word == 2)  // parameter 
-	{
-		if (is_run == 0)
-		{	
-			byte_8.udata = joint_r_data[0];
-			byte_8.buffer[4] = 0x00; byte_8.buffer[5] = 0x00; byte_8.buffer[6] = 0x00; byte_8.buffer[7] = 0x00;
-			byte_2_reply.buffer[0] = byte_8.buffer[0];
-			byte_2_reply.buffer[1] = byte_8.buffer[1];
-			pos1_ref = (double_t)byte_2_reply.udata * 0.01;
-			byte_2_reply.buffer[0] = byte_8.buffer[2];
-			byte_2_reply.buffer[1] = byte_8.buffer[3];
-			vel1_ref = (double_t)byte_2_reply.udata;
-			byte_2_reply.buffer[0] = byte_8.buffer[4];
-			byte_2_reply.buffer[1] = byte_8.buffer[5];
-			tor1_ref = (double_t)byte_2_reply.udata * 66 / 4096;
-			motor_pvt(&joint_1, joint_1_data, byte_8.udata, 1);
-			byte_8.udata = joint_r_data[1];
-			byte_8.buffer[4] = 0x00; byte_8.buffer[5] = 0x00; byte_8.buffer[6] = 0x00; byte_8.buffer[7] = 0x00;
-			motor_pvt(&joint_2, joint_2_data, byte_8.udata, 2);
-			byte_8.udata = joint_r_data[2];
-			byte_8.buffer[4] = 0x00; byte_8.buffer[5] = 0x00; byte_8.buffer[6] = 0x00; byte_8.buffer[7] = 0x00;
-			motor_pvt(&joint_3, joint_3_data, byte_8.udata, 3);
-			byte_8.udata = joint_r_data[3];
-			byte_8.buffer[4] = 0x00; byte_8.buffer[5] = 0x00; byte_8.buffer[6] = 0x00; byte_8.buffer[7] = 0x00;
-			motor_pvt(&joint_4, joint_4_data, byte_8.udata, 4);
-			motor_null(&joint_5, joint_5_data, 5);
-//			motor_null(&joint_6, joint_6_data, 6);
-			
-			is_run = 1;
-			
-		}
-		else if (is_run == 1)
-		{
-			/*motor_pd(&joint_1, joint_1_data, BufferOut.Cust.motor_1_1, 1);
-			motor_pd(&joint_2, joint_2_data, BufferOut.Cust.motor_2_1, 2);
-			motor_pd(&joint_3, joint_3_data, BufferOut.Cust.motor_3_1, 3);
-			motor_pd(&joint_4, joint_4_data, BufferOut.Cust.motor_4_1, 4);
-			motor_null(&joint_5, joint_5_data, 5);
-//			motor_null(&joint_6, joint_6_data, 6);	*/
-			motor_pd0(&joint_1, joint_1_data, 1); // change this !!!!!!!!!!!
-			motor_pd0(&joint_2, joint_2_data, 2);
-			motor_pd0(&joint_3, joint_3_data, 3);
-			motor_pd0(&joint_4, joint_4_data, 4);
-			
-			pos0[0] = pos1;
-			pos0[1] = pos2;
-			pos0[2] = pos3;
-			pos0[3] = pos4;
-			
-			pos_cnt[5] = 0;
-			is_run = 2;
-		}
-		else
-		{
-//			if (pos_cnt[0] < (int)we[0])
-//				pos_cnt[0]++;
-//			else
-//				pos_cnt[0] = 0;			
-//			pos_ref[0] = pos0[0];// + 20.0 - 20.0*cos(2.0f * 3.14159265359f*pos_cnt[0] / we[0]);
-//			byte_2_reply.udata = (uint16_t)(pos_ref[0] / 0.01);
-//			byte_8.buffer[0] = byte_2_reply.buffer[0]; byte_8.buffer[1] = byte_2_reply.buffer[1]; byte_8.buffer[2] = 0x00; byte_8.buffer[3] = 0x00; 
-//			byte_8.buffer[4] = 0x00; byte_8.buffer[5] = 0x00; byte_8.buffer[6] = 0x00; byte_8.buffer[7] = 0x00;	
-//			pos_1_ref64 = byte_8.udata;
-//			motor_pvt(&joint_1, joint_1_data, pos_1_ref64, 1);	
-			float_t pos1_dst=0;
-
-			if (fabs(pos1_dst-pos1)>0.1 && startFlag==0 ) // 60 deg/s -> 0.06 deg/ms
-				pos1_pid=pos1+sign_dbl(pos1_dst-pos1)*0.09;
-			else if (startFlag==0 && pos1!=0)
-				{pos1_pid=pos1; startFlag=1;pos_cnt[0]=0;}
-
-			if (startFlag==1)
-				{pos1_pid=20.0*sin(2.0f * 3.14159265359f*pos_cnt[0] / we[0]);
-				pos_cnt[0]++;
-				}
-
-			float_t p1=700;
-			float_t d1=8;
-
-			I1=p1*(pos1_pid-pos1)+d1*(0-vel1);
-			//I1=0;
-			if (I1>1000)
-				I1=1000;
-			if (I1<-1000)
-				I1=-1000;
-
-			byte_2_reply.udata=(int16_t)(I1+sign_dbl(I1)*0.5);
-			byte_8.buffer[0] = 0x00; byte_8.buffer[1] = 0x00; // pos
-			byte_8.buffer[2] = 0x00; byte_8.buffer[3] = 0x00; // speed
-			byte_8.buffer[4] = byte_2_reply.buffer[0]; byte_8.buffer[5] = byte_2_reply.buffer[1]; // torque
-			byte_8.buffer[6] = 0x00; byte_8.buffer[7] = 0x00; // unused
-			pos_1_ref64 = byte_8.udata;
-			motor_pvt(&joint_1, joint_1_data, pos_1_ref64, 1);
-		
-//			if (pos_cnt[1] < (int)we[1])
-//				pos_cnt[1]++;
-//			else
-//				pos_cnt[1] = 0;			
-//			pos_ref[1] = pos0[1];// + 20.0 - 20.0*cos(2.0f * 3.14159265359f*pos_cnt[1] / we[1]);
-//			byte_2_reply.udata = (uint16_t)(pos_ref[1] / 0.01);
-//			byte_8.buffer[0] = byte_2_reply.buffer[0]; byte_8.buffer[1] = byte_2_reply.buffer[1]; byte_8.buffer[2] = 0x00; byte_8.buffer[3] = 0x00; 
-//			byte_8.buffer[4] = 0x00; byte_8.buffer[5] = 0x00; byte_8.buffer[6] = 0x00; byte_8.buffer[7] = 0x00;	
-//			pos_2_ref64 = byte_8.udata;
-//			motor_pvt(&joint_2, joint_2_data, pos_2_ref64, 2);	
-			//motor_pvt(&joint_2, joint_2_data, BufferOut.Cust.motor_2, 2);
-		
-//			if (pos_cnt[2] < (int)we[2])
-//				pos_cnt[2]++;
-//			else
-//				pos_cnt[2] = 0;			
-//			pos_ref[2] = pos0[2];// + 20.0 - 20.0*cos(2.0f * 3.14159265359f*pos_cnt[2] / we[2]);
-//			byte_2_reply.udata = (uint16_t)(pos_ref[2] / 0.01);
-//			byte_8.buffer[0] = byte_2_reply.buffer[0]; byte_8.buffer[1] = byte_2_reply.buffer[1]; byte_8.buffer[2] = 0x00; byte_8.buffer[3] = 0x00; 
-//			byte_8.buffer[4] = 0x00; byte_8.buffer[5] = 0x00; byte_8.buffer[6] = 0x00; byte_8.buffer[7] = 0x00;	
-//			pos_3_ref64 = byte_8.udata;
-//			motor_pvt(&joint_3, joint_3_data, pos_3_ref64, 3);	
-			//motor_pvt(&joint_3, joint_3_data, BufferOut.Cust.motor_3, 3);
-		
-//			if (pos_cnt[3] < (int)we[3])
-//				pos_cnt[3]++;
-//			else
-//				pos_cnt[3] = 0;			
-//			pos_ref[3] = pos0[3];// + 20.0 - 20.0*cos(2.0f * 3.14159265359f*pos_cnt[3] / we[3]);
-//			byte_2_reply.udata = (uint16_t)(pos_ref[3] / 0.01);
-//			byte_8.buffer[0] = byte_2_reply.buffer[0]; byte_8.buffer[1] = byte_2_reply.buffer[1]; byte_8.buffer[2] = 0x00; byte_8.buffer[3] = 0x00; 
-//			byte_8.buffer[4] = 0x00; byte_8.buffer[5] = 0x00; byte_8.buffer[6] = 0x00; byte_8.buffer[7] = 0x00;	
-//			pos_4_ref64 = byte_8.udata;
-//			motor_pvt(&joint_4, joint_4_data, pos_4_ref64, 4);
-			//motor_pvt(&joint_4, joint_4_data, BufferOut.Cust.motor_4, 4);
-			
-//			if (pos_cnt[5] < (int)we[5])
-//				pos_cnt[5]++;
-//			else
-//				pos_cnt[5] = 0;			
-//			pos_ref[5] = 180.0;// + 180.0*sin(2.0f * 3.14159265359f*pos_cnt[5] / we[5]);
-//			byte_4_reply.udata = (uint32_t)(pos_ref[5] * 4096 / 360.0);
-//			byte_8.buffer[0] = byte_4_reply.buffer[0]; byte_8.buffer[1] = byte_4_reply.buffer[1]; byte_8.buffer[2] = byte_4_reply.buffer[2]; byte_8.buffer[3] = byte_4_reply.buffer[3]; 
-//			byte_8.buffer[4] = 0x00; byte_8.buffer[5] = 0x00; byte_8.buffer[6] = 0x00; byte_8.buffer[7] = 0x00;	
-//			pos_s_ref64 = byte_8.udata;
-//			motor_steer_enable(&joint_5, joint_5_data, pos_s_ref64, 5);
-			//motor_steer_enable(&joint_5, joint_5_data, BufferOut.Cust.motor_6, 5);
-		}		
-		is_init = 0;
-		send_to_all_slave();
-	}	
-	else if(control_word == 3)  // stop
-	{
-		motor_es(&joint_1, joint_1_data, 1);
-		motor_es(&joint_2, joint_2_data, 2);
-		motor_es(&joint_3, joint_3_data, 3);
-		motor_es(&joint_4, joint_4_data, 4);
- 
-		motor_null(&joint_5, joint_5_data, 5);
-		
-		is_run = 0;
-		send_to_all_slave();
-		
-		//HAL_GPIO_WritePin(GPIOA, ES_Pin, GPIO_PIN_SET);
-	}
-	else  // stop
-	{		
-		//HAL_GPIO_WritePin(GPIOA, ES_Pin, GPIO_PIN_SET);
 	}
 }
 

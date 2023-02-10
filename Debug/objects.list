@@ -21,6 +21,8 @@
 "./Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_tim_ex.o"
 "./Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_uart.o"
 "./Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_uart_ex.o"
+"./Src/Global_var.o"
+"./Src/Motor_Untilities.o"
 "./Src/main.o"
 "./Src/stm32h7xx_hal_msp.o"
 "./Src/stm32h7xx_it.o"
