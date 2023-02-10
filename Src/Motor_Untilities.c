@@ -280,4 +280,19 @@ float_t sign_dbl(float_t data)
 		return 0.0;
 }
 
+void motor_vel(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, int32_t data_in, uint32_t Id)
+{
+	joint_tx->DataLength = FDCAN_DLC_BYTES_8;
+	joint_tx->Identifier = Id + 0x140;
 
+	byte_4_int32.udata=data_in;
+
+	data_buffer[0] = 0xa2;
+	data_buffer[1] = 0x00;
+	data_buffer[2] = 0x00;
+	data_buffer[3] = 0x00;
+	data_buffer[4] = byte_4_int32.buffer[0];
+	data_buffer[5] = byte_4_int32.buffer[1];
+	data_buffer[6] = byte_4_int32.buffer[2];
+	data_buffer[7] = byte_4_int32.buffer[3];
+}

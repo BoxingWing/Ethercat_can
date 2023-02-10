@@ -51,6 +51,9 @@ void motor_decode_mulPos(uint8_t* data, float_t * mulPos);
 
 void motor_decode_cur(uint8_t* data, float_t* pos, float_t* vel, float_t* tor);
 
+void motor_vel(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, int32_t data_in, uint32_t Id);
+
+
 
 float_t sign_dbl(float_t data);
 

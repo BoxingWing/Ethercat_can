@@ -100,7 +100,7 @@ uint8_t error_hs_ = 0;
 uint16_t motor_status_can = 0;
 uint64_t pos_cnt[6] = { 0, 0, 0, 0, 0, 0 };
 uint8_t startFlag=0;
-double we[6] = { 8000.0, 8000.0, 8000.0, 8000.0, 8000.0, 8000.0 };
+double we[6] = { 2000.0, 8000.0, 8000.0, 8000.0, 8000.0, 8000.0 };
 double pos_ref[6] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
 double pos0[6] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
 
@@ -237,63 +237,18 @@ void control()
 		}
 		else
 		{
-//			if (pos_cnt[0] < (int)we[0])
-//				pos_cnt[0]++;
-//			else
-//				pos_cnt[0] = 0;
-//			pos_ref[0] = pos0[0];// + 20.0 - 20.0*cos(2.0f * 3.14159265359f*pos_cnt[0] / we[0]);
-//			byte_2_reply.udata = (uint16_t)(pos_ref[0] / 0.01);
-//			byte_8.buffer[0] = byte_2_reply.buffer[0]; byte_8.buffer[1] = byte_2_reply.buffer[1]; byte_8.buffer[2] = 0x00; byte_8.buffer[3] = 0x00;
-//			byte_8.buffer[4] = 0x00; byte_8.buffer[5] = 0x00; byte_8.buffer[6] = 0x00; byte_8.buffer[7] = 0x00;
-//			pos_1_ref64 = byte_8.udata;
-//			motor_pvt(&joint_1, joint_1_data, pos_1_ref64, 1);
 
-			float_t pos1_dst=0;
+			float_t phi,vel_des;
+			phi=2.0*3.14159265*pos_cnt[0]/ we[0];
+			if (phi>=2*3.14159265)
+				pos_cnt[0]=0;
 
-			if (fabs(pos1_dst-MF_1.out_Pos)>0.1 && startFlag==0 ) // 60 deg/s -> 0.06 deg/ms
-				pos1_pid=MF_1.out_Pos+sign_dbl(pos1_dst-MF_1.out_Pos)*0.09;
-			else if (startFlag==0 && MF_1.out_Pos!=0)
-				{pos1_pid=MF_1.out_Pos; startFlag=1;pos_cnt[0]=0;}
+			vel_des=70.0*sin(phi)+13;
 
-			if (startFlag==1)
-				{pos1_pid=20.0*sin(2.0f * 3.14159265359f*pos_cnt[0] / we[0]);
-				pos_cnt[0]++;
-				}
-
-			float_t p1=1000;
-			float_t d1=10;
-
-			I1=p1*(pos1_pid-MF_1.out_Pos)+d1*(0-MF_1.out_Vel_fil);
-			//I1=0;
-
-			if (I1>1000)
-				I1=1000;
-			if (I1<-1000)
-				I1=-1000;
-
-			/*byte_2_reply.udata=(int16_t)(I1+0.5);
-			byte_8.buffer[0] = 0x00; byte_8.buffer[1] = 0x00; // pos
-			byte_8.buffer[2] = 0x00; byte_8.buffer[3] = 0x00; // speed
-			byte_8.buffer[4] = byte_2_reply.buffer[0]; byte_8.buffer[5] = byte_2_reply.buffer[1]; // torque
-			byte_8.buffer[6] = 0x00; byte_8.buffer[7] = 0x00; // unused
-			pos_1_ref64 = byte_8.udata;
-			motor_pvt(&joint_1, joint_1_data, pos_1_ref64, 1);*/
-
-			motor_current(&joint_1, joint_1_data, (int16_t)(I1+0.5), 1);
-
-			/*if (loop_1ms_count%2==0)
-				motor_current(&joint_1, joint_1_data, (int16_t)(I1+0.5), 1);
-			if (loop_1ms_count%2==1)
-				motor_get_mulPos(&joint_1, joint_1_data, 1);*/
+			motor_vel(&joint_1, joint_1_data, (int32_t)(vel_des*100*10), 1); // 10 for the gear ratio
 
 			send_to_all_slave();
-
-			/*
-			if (loop_1ms_count%2==0)
-				send_to_all_slave_cur0();
-			if (loop_1ms_count%2==1)
-				send_to_all_slave_sgl();*/
-
+			pos_cnt[0]++;
 		}
 		is_init = 0;
 	}
