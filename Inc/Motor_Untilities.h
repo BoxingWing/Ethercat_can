@@ -23,7 +23,11 @@ void motor_pvt0(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, uint32_t 
 
 void motor_pd(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, uint64_t data_in, uint32_t Id);
 
+void motor_pd_v2(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, int16_t kp, int16_t kd, uint32_t Id);
+
 void motor_pvt(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, uint64_t data_in, uint32_t Id);
+
+void motor_pvt_v2(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, float_t desP, float_t desV, int16_t desT, uint32_t Id);
 
 void motor_es(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, uint32_t Id);
 
@@ -34,6 +38,8 @@ void motor_steer_enable(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, u
 void motor_null(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, uint32_t Id);
 
 void motor_current(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, int16_t data_in, uint32_t Id);
+
+void motor_pos(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, int32_t pos_in, uint16_t maxSpeed, uint32_t Id);
 
 void motor_cmd(FDCAN_TxHeaderTypeDef* joint_tx, uint8_t* data_buffer, uint8_t cmd, uint32_t Id);
 

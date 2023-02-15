@@ -36,7 +36,7 @@ union Byte2u
 union Byte2
 {
 	int16_t udata;
-	int8_t buffer[2];
+	uint8_t buffer[2];
 };
 
 union Byte8_int64

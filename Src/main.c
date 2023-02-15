@@ -100,7 +100,7 @@ uint8_t error_hs_ = 0;
 uint16_t motor_status_can = 0;
 uint64_t pos_cnt[6] = { 0, 0, 0, 0, 0, 0 };
 uint8_t startFlag=0;
-double we[6] = { 2000.0, 8000.0, 8000.0, 8000.0, 8000.0, 8000.0 };
+double we[6] = { 1000.0, 8000.0, 8000.0, 8000.0, 8000.0, 8000.0 };
 double pos_ref[6] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
 double pos0[6] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
 
@@ -204,7 +204,7 @@ void control()
 	{
 		if (is_init == 0)   // init
 		{
-			if (init_counter < 20)
+			if (init_counter < 2)
 			{
 				init_counter++;
 			}
@@ -213,13 +213,13 @@ void control()
 				init_counter = 0;
 				is_init = 1;
 			}
-			if (loop_1ms_count%2==0)
-				send_to_all_slave_sgl();
-			if (loop_1ms_count%2==1)
-				send_to_all_slave_cur0();
+			motor_pos(&joint_1, joint_1_data, 0, (uint16_t)(60*10), 1);
+			send_to_all_slave();
 		}
 		else  // get data
 		{
+			motor_pd_v2(&joint_1, joint_1_data, 50, 250, 1); // min: 50, 200
+			send_to_all_slave();
 			control_word=2;
 		}
 
@@ -237,18 +237,24 @@ void control()
 		}
 		else
 		{
+			if (fabs(MF_1.out_Pos)<0.2 && (MF_1.out_Pos)!=0)
+				MF_1.iniReady=1;
 
-			float_t phi,vel_des;
+
+			float_t phi,pos_des;
 			phi=2.0*3.14159265*pos_cnt[0]/ we[0];
 			if (phi>=2*3.14159265)
 				pos_cnt[0]=0;
 
-			vel_des=70.0*sin(phi)+13;
+			pos_des=20.0*sin(phi);
 
-			motor_vel(&joint_1, joint_1_data, (int32_t)(vel_des*100*10), 1); // 10 for the gear ratio
+			if (MF_1.iniReady==1)
+				{motor_pvt_v2(&joint_1, joint_1_data, pos_des, 0, 0, 1);pos_cnt[0]++;}
+			else
+				motor_get_sglPos(&joint_1, joint_1_data, 1);
 
 			send_to_all_slave();
-			pos_cnt[0]++;
+
 		}
 		is_init = 0;
 	}
@@ -300,91 +306,22 @@ void unpack_reply(FDCAN_RxHeaderTypeDef *pRxHeader, uint8_t *data)
 
 			if (id == 1)
 			{
-				if (data[0]==0xAF)
+				if (data[0]==0xAE)
 				{
 				motor_decode_pvt(data, &pos1, &vel1, &tor1);
 
-				if (pos1>180)
-					pos1=pos1-360;
-				if (pos1<-180)
-					pos1=pos1+360;
-
-				// vel from the diff of pos
-				float_t tmp;
-				tmp=(pos1-pos1_old)/0.001;
-				if (tmp>1000 || tmp<-1000)
-					tmp=0;
-				vel1_cal=tmp;
-
-				// vel from low pass of vel feedback
-				for (int i=0;i<2;i++)
-					vel1_rec[i]=vel1_rec[i+1];
-				vel1_rec[2]=vel1;
-
-				float_t tmp2=0;
-				for (int i=0;i<3;i++)
-					tmp2+=vel1_rec[i]*fir_par[i];
-				//---
-
-				if (TD_iniCount==0)
-				{
-					TD_x1=TD_x1_old+TD_h*TD_x2_old;
-					TD_x2=TD_x2_old-TD_h*(TD_r*TD_r*TD_x1_old+2*TD_r*TD_x2_old-TD_r*TD_r*pos1);
-					TD_x1_old=TD_x1;
-					TD_x2_old=TD_x2;
-				}
-				else
-				{
-					TD_iniCount--;
-					TD_x1_old=pos1;
-					TD_x2_old=vel1;
-					TD_x1=pos1;
-					TD_x2=vel1;
-				}
-
-				vel1_fil=TD_x2;
-
-				pos1_old=pos1;
+				MF_1.out_Pos=pos1;
+				MF_1.out_Vel=vel1;
+				MF_1.tor=tor1;
 				}
 
 				if (data[0]==0x94)
 				{
-					/*float pos_tmp;
-					motor_decode_sglPos(data, &pos_tmp);
-					MF_1.sgl_pos_old=MF_1.sgl_pos;
-					MF_1.sgl_pos=pos_tmp;
-
-					if (MF_1.iniReady>0)
-					{
-						if (MF_1.sgl_pos-MF_1.sgl_pos_old<-300)
-							MF_1.loopNum++;
-						if (MF_1.sgl_pos-MF_1.sgl_pos_old>300)
-							MF_1.loopNum--;
-
-						pos_tmp=(MF_1.sgl_pos+MF_1.pos_off+MF_1.loopNum*360.)/MF_1.ratio;
-						if (pos_tmp>180)
-							pos_tmp-=360;
-
-						MF_1.out_Pos=pos_tmp;
-					}*/
-
-					if (MF_1.sgl_pos_old!=0 && MF_1.pos_off!=0)
-						MF_1.iniReady=1;
-
-					sgl_pos=MF_1.sgl_pos;
 
 					float_t pos_tmp;
 					motor_decode_sglPos(data, &pos_tmp);
-					//pos_tmp=pos_tmp-floor(pos_tmp/360)*360; // round to 0-360
-					MF_1.mul_pos=pos_tmp;
-					if (MF_1.sgl_pos_old!=0 && MF_1.sgl_pos!=0 && MF_1.iniReady==0)
-					{
-						MF_1.pos_off=MF_1.mul_pos-MF_1.sgl_pos;
-						MF_1.loopNum=0;
-						MF_1.iniReady=1;
-					}
+					MF_1.out_Pos=pos_tmp/10;
 
-					mul_pos=MF_1.mul_pos/10.0;
 				}
 				if (data[0]==0x92)
 				{
@@ -448,6 +385,7 @@ void unpack_reply(FDCAN_RxHeaderTypeDef *pRxHeader, uint8_t *data)
 					vel_cur=MF_1.out_Vel;
 					vel_cur_fil=MF_1.out_Vel_fil;
 				}
+
 			}			
 			if (id == 2)
 			{
@@ -1066,14 +1004,14 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, CSS_Pin|ES_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(CSS_GPIO_Port, CSS_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : CSS_Pin ES_Pin */
-  GPIO_InitStruct.Pin = CSS_Pin|ES_Pin;
+  /*Configure GPIO pin : CSS_Pin */
+  GPIO_InitStruct.Pin = CSS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  HAL_GPIO_Init(CSS_GPIO_Port, &GPIO_InitStruct);
 
 }
 
@@ -1306,7 +1244,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		
 		can2_error_counter += error_counter3;
 		can2_error_counter += error_counter4;
-		HAL_GPIO_TogglePin(GPIOA, ES_Pin);
+		//HAL_GPIO_TogglePin(GPIOA, ES_Pin);
 	}
 }
 
