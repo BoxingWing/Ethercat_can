@@ -17,4 +17,4 @@ union Byte4 byte_4_reply;
 union Byte8_int64 byte_8_int64;
 union Byte4I byte_4_int32;
 
-struct motor_info MF_1={0,0,0,0,0,0,0,0,0,0,0,10};
+struct motor_info MF_1={0,0,0,0,0,0,0,0,0,0,0,0,10};

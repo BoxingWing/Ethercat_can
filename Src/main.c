@@ -164,6 +164,8 @@ float_t tor_pos=0;
 float_t vel_cur=0;
 float_t vel_cur_fil=0;
 
+float_t vel_cal=0;
+
 int64_t loop_1ms_count=0;
 
 /* USER CODE END PV */
@@ -310,9 +312,11 @@ void unpack_reply(FDCAN_RxHeaderTypeDef *pRxHeader, uint8_t *data)
 				{
 				motor_decode_pvt(data, &pos1, &vel1, &tor1);
 
+				MF_1.out_Pos_Old=MF_1.out_Pos;
 				MF_1.out_Pos=pos1;
 				MF_1.out_Vel=vel1;
 				MF_1.tor=tor1;
+				vel_cal= (MF_1.out_Pos-MF_1.out_Pos_Old)/0.001;
 				}
 
 				if (data[0]==0x94)

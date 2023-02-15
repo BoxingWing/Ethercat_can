@@ -53,6 +53,7 @@ struct motor_info{
 	float_t tor;
 	float_t sgl_pos_old;
 	float_t out_Pos;
+	float_t out_Pos_Old;
 	float_t out_Vel;
 	float_t out_Vel_fil;
 	float_t pos_off;

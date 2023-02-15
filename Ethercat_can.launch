@@ -41,7 +41,7 @@
     <stringAttribute key="com.st.stm32cube.ide.mcu.debug.swv.datatrace_0" value="Enabled=false:Address=mul_pos:Access=Write:Size=Word:Function=Data Value"/>
     <stringAttribute key="com.st.stm32cube.ide.mcu.debug.swv.datatrace_1" value="Enabled=true:Address=pos1:Access=Read:Size=Word:Function=Data Value"/>
     <stringAttribute key="com.st.stm32cube.ide.mcu.debug.swv.datatrace_2" value="Enabled=true:Address=vel1:Access=Read:Size=Word:Function=Data Value"/>
-    <stringAttribute key="com.st.stm32cube.ide.mcu.debug.swv.datatrace_3" value="Enabled=false:Address=vel_cur:Access=Write:Size=Word:Function=Data Value"/>
+    <stringAttribute key="com.st.stm32cube.ide.mcu.debug.swv.datatrace_3" value="Enabled=true:Address=vel_cal:Access=Write:Size=Word:Function=Data Value"/>
     <stringAttribute key="com.st.stm32cube.ide.mcu.debug.swv.itmports" value="1:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0"/>
     <stringAttribute key="com.st.stm32cube.ide.mcu.debug.swv.itmports_priv" value="0:0:0:0"/>
     <stringAttribute key="com.st.stm32cube.ide.mcu.debug.swv.pc_sample" value="0:16384"/>
